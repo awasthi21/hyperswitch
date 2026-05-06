@@ -1654,11 +1654,24 @@ async fn merge_connector_customer_for_existing_customer(
         .and_then(|val| val.peek().as_object().cloned())
         .unwrap_or_default();
 
+    let mut changed = false;
     for detail in new_details {
-        merged_map.insert(
-            detail.merchant_connector_id.get_string_repr().to_string(),
-            serde_json::Value::String(detail.connector_customer_id),
-        );
+        if detail.connector_customer_id.trim().is_empty() {
+            continue;
+        }
+        let key = detail.merchant_connector_id.get_string_repr().to_string();
+        // Backfill only: never overwrite an existing entry for this MCA.
+        if let Some(existing_value) = merged_map.get(&key) {
+            if existing_value.as_str().is_some_and(|s| !s.is_empty()) {
+                continue;
+            }
+        }
+        merged_map.insert(key, serde_json::Value::String(detail.connector_customer_id));
+        changed = true;
+    }
+
+    if !changed {
+        return Ok(services::ApplicationResponse::Json(()));
     }
 
     let last_modified_by = initiator.and_then(|initiator| {
@@ -1715,8 +1728,23 @@ async fn merge_connector_customer_for_existing_customer(
         .switch()?;
 
     let mut merged = existing.connector_customer.clone().unwrap_or_default();
+    let mut changed = false;
     for detail in new_details {
+        if detail.connector_customer_id.trim().is_empty() {
+            continue;
+        }
+        // Backfill only: never overwrite an existing entry for this MCA.
+        if let Some(existing_value) = merged.get(&detail.merchant_connector_id) {
+            if !existing_value.is_empty() {
+                continue;
+            }
+        }
         merged.insert(detail.merchant_connector_id, detail.connector_customer_id);
+        changed = true;
+    }
+
+    if !changed {
+        return Ok(services::ApplicationResponse::Json(()));
     }
 
     let last_modified_by = initiator.and_then(|initiator| {
